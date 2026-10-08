@@ -4,7 +4,56 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export function replaceHtmlElementsWithUids(schema: JSONSchema7Definition) {
+import {DevToolsCommentBridge} from './devtools/DevToolsCommentBridge.js';
+import {
+  createTargetUniverse,
+  type TargetUniverse,
+} from './devtools/DevtoolsUtils.js';
+import {
+  ConsoleCollector,
+  NetworkCollector,
+  type ListenerMap,
+  type UncaughtError,
+} from './collectors/PageCollector.js';
+import {TextSnapshot} from './TextSnapshot.js';
+import {
+  type Locator,
+  PredefinedNetworkConditions,
+  type Dialog,
+  type ElementHandle,
+  type Viewport,
+  type WebMCPTool,
+  type Protocol,
+  type Page,
+  type Target,
+  type ConsoleMessage,
+  type HTTPRequest,
+  DevTools,
+  type JSONSchema7Definition,
+} from './third_party/index.js';
+import type {ToolGroups} from './tools/thirdPartyDeveloper.js';
+import type {
+  ContextPage,
+  DevToolsData,
+  MatchedStyles,
+  Response,
+} from './tools/ToolDefinition.js';
+import type {
+  EmulationSettings,
+  GeolocationOptions,
+  TextSnapshotNode,
+} from './types.js';
+import {logger} from './utils/logger.js';
+import {
+  getNetworkMultiplierFromString,
+  WaitForHelper,
+  type WaitForEventsResult,
+  type DialogAction,
+} from './utils/WaitForHelper.js';
+
+export function replaceHtmlElementsWithUids(
+  schema: JSONSchema7Definition,
+): void {
   if (typeof schema === 'boolean') {
     return;
   }
@@ -54,55 +103,8 @@ export function replaceHtmlElementsWithUids(schema: JSONSchema7Definition) {
     }
   }
 }
-
-import {DevToolsCommentBridge} from './devtools/DevToolsCommentBridge.js';
-import {
-  createTargetUniverse,
-  type TargetUniverse,
-} from './devtools/DevtoolsUtils.js';
-import {
-  ConsoleCollector,
-  NetworkCollector,
-  type ListenerMap,
-  type UncaughtError,
-} from './collectors/PageCollector.js';
-import {TextSnapshot} from './TextSnapshot.js';
-import type {Locator} from './third_party/index.js';
-import {
-  PredefinedNetworkConditions,
-  type Dialog,
-  type ElementHandle,
-  type Viewport,
-  type WebMCPTool,
-  type Protocol,
-  type Page,
-  type Target,
-  type ConsoleMessage,
-  type HTTPRequest,
-  DevTools,
-  type JSONSchema7Definition,
-} from './third_party/index.js';
-import type {ToolGroups} from './tools/thirdPartyDeveloper.js';
 const DEFAULT_TIMEOUT = 5_000;
 const NAVIGATION_TIMEOUT = 10_000;
-import type {
-  ContextPage,
-  DevToolsData,
-  MatchedStyles,
-  Response,
-} from './tools/ToolDefinition.js';
-import type {
-  EmulationSettings,
-  GeolocationOptions,
-  TextSnapshotNode,
-} from './types.js';
-import {logger} from './utils/logger.js';
-import {
-  getNetworkMultiplierFromString,
-  WaitForHelper,
-  type WaitForEventsResult,
-  type DialogAction,
-} from './utils/WaitForHelper.js';
 
 function isBackendNodeId(
   id: unknown,
@@ -246,7 +248,7 @@ export class McpPage implements ContextPage {
       throw new Error(`McpPage (id=${this.id}) has already been disposed.`);
     }
     if (this.#initPromise) {
-      return this.#initPromise;
+      return await this.#initPromise;
     }
     this.#initPromise = this.#doInit();
     try {
@@ -633,7 +635,7 @@ export class McpPage implements ContextPage {
 
         const stashedElements: Element[] = [];
 
-        const stashDOMElement = (el: Element) => {
+        const stashDOMElement = (el: Element): {stashedId: string} => {
           stashedElements.push(el);
           return {
             stashedId: `stashed-${stashedElements.length - 1}`,
@@ -791,7 +793,7 @@ export class McpPage implements ContextPage {
           node.stashedId.startsWith('stashed-') &&
           Object.keys(node).length === 1
         ) {
-          const index = parseInt(node.stashedId.split('-')[1]);
+          const index = parseInt(node.stashedId.split('-')[1], 10);
           return {uid: cdpElementIds[index]};
         }
         const resultObj: Record<string, unknown> = {};
@@ -822,7 +824,7 @@ export class McpPage implements ContextPage {
     if (!node) {
       throw new Error(`Element uid "${uid}" not found on page ${this.id}.`);
     }
-    return this.#resolveElementHandle(node, uid);
+    return await this.#resolveElementHandle(node, uid);
   }
 
   async #resolveElementHandle(
@@ -843,7 +845,7 @@ export class McpPage implements ContextPage {
     }
   }
 
-  getAXNodeByUid(uid: string) {
+  getAXNodeByUid(uid: string): TextSnapshotNode | undefined {
     return this.textSnapshot?.idToNode.get(uid);
   }
 
@@ -990,7 +992,7 @@ export class McpPage implements ContextPage {
     return {};
   }
 
-  async restoreEmulation() {
+  async restoreEmulation(): Promise<void> {
     const currentSetting = this.emulationSettings;
     await this.emulate(currentSetting);
   }
@@ -1110,7 +1112,7 @@ export class McpPage implements ContextPage {
     await page.setViewport(newSettings.viewport ?? null);
   }
 
-  updateTimeouts() {
+  updateTimeouts(): void {
     if (!this.#pptrPage) {
       return;
     }
@@ -1151,7 +1153,7 @@ export class McpPage implements ContextPage {
   /**
    * We need to ignore favicon request as they make our test flaky
    */
-  async setUpNetworkCollectorForTesting() {
+  async setUpNetworkCollectorForTesting(): Promise<void> {
     this.networkCollector.dispose();
     this.networkCollector = new NetworkCollector(
       this.pptrPage,
